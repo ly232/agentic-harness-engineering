@@ -1,0 +1,57 @@
+# Run with (must run `ollama serve` first):
+# uv run python evolve.py --config configs/experiments/exp-simple-code-ollama.yaml
+
+_base: "../base.yaml"
+
+_name: "ollama"
+_description: "Ollama Qwen3 14B"
+
+_tags:
+  - "model-comparison"
+  - "ollama"
+
+source_config_dir: "agents/code_agent_simple"
+agent_config_filename: "code_agent.yaml"
+
+path: "/Users/ly232/github/terminal-bench-2"
+
+dataset: null
+
+harbor:
+  k: 1
+  n_concurrent: 1
+
+llm:
+  api_key: "ollama"
+  base_url: "http://localhost:11434/v1"
+  model: "qwen3:14b"
+
+code_agent_patch:
+  tool_call_mode: openai
+  llm_config:
+    api_type: openai_chat_completion
+
+evolve_agent:
+  tool_call_mode: openai
+  llm_config:
+    api_key: "ollama"
+    base_url: "http://localhost:11434/v1"
+    model: "qwen3:14b"
+    api_type: openai_chat_completion
+    stream: true
+
+explore_agent_patch:
+  tool_call_mode: openai
+  llm_config:
+    api_type: openai_chat_completion
+
+max_iterations: 1
+
+explore_agent:
+  enabled: false
+
+agent_debugger:
+  enabled: false
+
+notify:
+  enabled: false
