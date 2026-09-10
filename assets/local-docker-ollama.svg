@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 620" role="img" aria-labelledby="title desc">
+  <title id="title">Local Docker Ollama architecture</title>
+  <desc id="desc">Harbor runs a coding agent in a local Docker container. The container reaches Ollama on the Mac through host.docker.internal. The evolve agent and Ollama run directly on the Mac. E2B is not involved.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .title { font: 700 26px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .zone-title { font: 700 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .label { font: 600 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .small { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .tiny { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #64748b; }
+      .zone { fill: #f8fafc; stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 8 6; }
+      .host { fill: #dbeafe; stroke: #3b82f6; stroke-width: 2; }
+      .container { fill: #ede9fe; stroke: #7c3aed; stroke-width: 2; }
+      .service { fill: #dcfce7; stroke: #16a34a; stroke-width: 2; }
+      .unused { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 7 5; }
+      .edge { fill: none; stroke: #475569; stroke-width: 2.5; marker-end: url(#arrow); }
+      .edge-label { font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .strike { stroke: #ef4444; stroke-width: 5; stroke-linecap: round; }
+    </style>
+  </defs>
+
+  <rect width="1100" height="620" fill="#ffffff"/>
+  <text x="550" y="42" text-anchor="middle" class="title">Local Ollama experiment: what runs where?</text>
+
+  <!-- Connectors are deliberately behind the nodes. -->
+  <path class="edge" d="M 305 252 C 380 205, 415 205, 475 252"/>
+  <text x="387" y="195" text-anchor="middle" class="edge-label">starts rollout</text>
+  <path class="edge" d="M 625 252 C 700 205, 735 205, 795 252"/>
+  <text x="710" y="195" text-anchor="middle" class="edge-label">OpenAI-compatible API</text>
+  <path class="edge" d="M 795 355 C 720 410, 685 410, 625 355"/>
+  <text x="710" y="442" text-anchor="middle" class="edge-label">model response / tool calls</text>
+  <path class="edge" d="M 475 355 C 400 410, 365 410, 305 355"/>
+  <text x="390" y="442" text-anchor="middle" class="edge-label">results and traces</text>
+
+  <!-- Host boundary -->
+  <rect x="42" y="78" width="1016" height="475" rx="18" class="zone"/>
+  <text x="68" y="110" class="zone-title">Your Mac mini (host machine)</text>
+
+  <!-- Main nodes -->
+  <rect x="90" y="225" width="215" height="130" rx="14" class="host"/>
+  <text x="197" y="264" text-anchor="middle" class="label">Harbor / evolve.py</text>
+  <text x="197" y="292" text-anchor="middle" class="small">launches and monitors</text>
+  <text x="197" y="315" text-anchor="middle" class="small">the evaluation</text>
+  <text x="197" y="337" text-anchor="middle" class="tiny">runs directly on macOS</text>
+
+  <rect x="475" y="225" width="150" height="130" rx="14" class="container"/>
+  <text x="550" y="263" text-anchor="middle" class="label">Docker</text>
+  <text x="550" y="286" text-anchor="middle" class="label">container</text>
+  <text x="550" y="312" text-anchor="middle" class="small">coding agent</text>
+  <text x="550" y="335" text-anchor="middle" class="tiny">isolated task files</text>
+
+  <rect x="795" y="225" width="215" height="130" rx="14" class="service"/>
+  <text x="902" y="264" text-anchor="middle" class="label">Ollama</text>
+  <text x="902" y="292" text-anchor="middle" class="small">qwen3:14b</text>
+  <text x="902" y="315" text-anchor="middle" class="small">localhost:11434</text>
+  <text x="902" y="337" text-anchor="middle" class="tiny">runs directly on macOS</text>
+
+  <!-- Explanatory callout -->
+  <rect x="275" y="478" width="550" height="54" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="550" y="501" text-anchor="middle" class="label">host.docker.internal</text>
+  <text x="550" y="521" text-anchor="middle" class="small">Docker's name for “the Mac host”</text>
+
+  <!-- Explicitly show what is removed from the path. -->
+  <rect x="400" y="575" width="300" height="34" rx="10" class="unused"/>
+  <text x="550" y="597" text-anchor="middle" class="small">E2B SaaS: not used in this mode</text>
+  <path d="M 410 583 L 690 602" class="strike"/>
+  <path d="M 690 583 L 410 602" class="strike"/>
+</svg>

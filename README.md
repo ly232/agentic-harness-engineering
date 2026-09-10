@@ -59,6 +59,8 @@ Across ten `evaluate → analyze → improve` iterations, **AHE (Agentic Harness
 - Python ≥ 3.13
 - [uv](https://docs.astral.sh/uv/)
 - tmux
+- Docker Desktop (for the local Ollama experiment)
+- Ollama (for the local Ollama experiment)
 
 ```bash
 # macOS
@@ -79,6 +81,43 @@ uv sync
 
 > `uv sync` installs every dependency declared in `pyproject.toml`.
 
+### Local Docker setup (macOS)
+
+The local Ollama experiment runs each coding-agent rollout in a Docker
+container. On a Mac mini, install Docker Desktop and start its VM:
+
+```bash
+brew install --cask docker
+open -a Docker
+```
+
+Wait until Docker Desktop reports that it is running, then verify the command
+line is connected to it:
+
+```bash
+docker version
+docker run --rm hello-world
+```
+
+In Docker Desktop, open **Settings → Resources** and allocate enough CPU and
+memory for the benchmark task and the Ollama model. As a starting point, use
+at least 4 CPUs and 8 GB of memory if the Mac mini has enough RAM. Ollama runs
+on macOS outside Docker; the container reaches it through
+`host.docker.internal`.
+
+For the local Docker experiment, `E2B_API_KEY` is not required because Harbor
+does not create E2B sandboxes. The normal `.env` setup is still needed for the
+evolve agent's LLM and optional web-search integration.
+
+The complete local arrangement is shown below. The important detail is that
+the coding agent is isolated inside Docker, while Ollama stays on macOS. Inside
+the container, `host.docker.internal` means “the Mac host”; it is not the same
+as `localhost`.
+
+<p align="center">
+  <img src="assets/local-docker-ollama.svg" alt="Local Docker and Ollama architecture" width="100%">
+</p>
+
 ### 2. Configure environment variables
 
 ```bash
@@ -90,7 +129,7 @@ Edit `.env`. At minimum, set:
 | Variable | Purpose |
 |---|---|
 | `LLM_API_KEY` / `LLM_BASE_URL` | Main LLM endpoint (`code_agent` and `evolve_agent` both consume it) |
-| `E2B_API_KEY` | [E2B](https://e2b.dev/) sandbox — see the next subsection for SaaS vs. self-hosted |
+| `E2B_API_KEY` | [E2B](https://e2b.dev/) sandbox (E2B mode only) — see the next subsection for SaaS vs. self-hosted |
 | `SERPER_API_KEY` | Web search used by `evolve_agent` |
 
 `ADB_LLM_*` and `GPT54_LLM_*` are optional — leave them unset to fall back to `LLM_*`, or set them to point ADB / the gpt-5.4 experiment at a stronger model. `LANGFUSE_*`, `BP_HTML_PARSER_*`, and `FEISHU_WEBHOOK` are all optional observability / convenience hooks; see `.env.example` for the full list.
@@ -114,6 +153,164 @@ AHE runs every rollout inside an E2B sandbox. Two deployment modes are supported
   No shared concurrency cap applies, but the cluster's hardware capacity still does.
 
 ### 3. Build E2B templates (one-time per dataset)
+
+#### Running Ollama locally
+
+The E2B environment is remote and cannot reach an Ollama server on your host at
+`localhost`. For local Ollama experiments, use
+`configs/experiments/exp-simple-code-ollama.yaml`. It selects Harbor's local
+Docker environment and points the coding agent at Docker Desktop's host alias:
+
+```bash
+ollama serve
+uv run python evolve.py --config configs/experiments/exp-simple-code-ollama.yaml
+```
+
+Docker Desktop and Ollama must both be running. The URL is intentionally
+`http://host.docker.internal:11434/v1` for the coding agent inside Docker; the
+evolve agent itself runs on the host and continues to use `localhost`.
+
+On the first local run, AHE copies the task dataset into the experiment
+directory and builds the NexAU runtime into the local task image. This initial
+Docker build can take several minutes and downloads Python packages; later runs
+reuse Docker's build cache. There is no separate coding-agent container command
+to run manually.
+
+This mode keeps the task isolated in a local container while removing the E2B
+SaaS network boundary. It is not suitable for leaderboard runs that require the
+standard E2B environment.
+
+#### Why these local-mode changes are necessary
+
+The repository originally ran Harbor rollouts in remote E2B sandboxes. In that
+arrangement, `localhost:11434` means “the E2B sandbox itself,” so the coding
+agent cannot reach Ollama running on the Mac. The local Docker configuration
+addresses that boundary while preserving task isolation:
+
+| Change | Reason |
+|---|---|
+| Use Harbor's `docker` environment | Keeps the coding agent and task tools isolated, but runs the environment on the Mac instead of in a remote E2B sandbox. |
+| Use `host.docker.internal` for the coding agent | This Docker-provided hostname routes from the container to services on the Mac. `localhost` would point back to the container. |
+| Keep `localhost` for `evolve.py` | The evolve agent runs directly on macOS, so its `localhost` already refers to the Ollama server. |
+| Prepare `/opt/nexau-venv` in the task image | E2B templates normally contain this NexAU runtime because `build_templates.py` pre-installs it. Plain Harbor Docker images do not, so the local image must provide it explicitly. |
+| Force the local image build | Harbor can otherwise reuse an older task image created before the NexAU runtime was added. Docker still reuses unchanged layers, so subsequent builds remain cached. |
+
+The result is three relevant application pieces on one Mac: Harbor/evolve
+launches the evaluation, a local Docker container runs the coding agent, and
+Ollama serves the model. `host.docker.internal` is only a hostname between the
+last two; it is not another process.
+
+#### Finding evaluation logs
+
+Each run prints its experiment directory near the beginning of the command,
+for example:
+
+```text
+experiments/2026-09-09__21-46-17__ollama/
+```
+
+Use that directory as the starting point when diagnosing a run. The most useful
+files are under `runs/iteration_001/input/benchmark/<job-id>/<trial-id>/`:
+
+| Path | What it tells you |
+|---|---|
+| `result.json` | Overall Harbor result, trial count, errors, rewards, and exception details. |
+| `trial.log` | Short trial-level status, such as agent setup failures. |
+| `agent/nexau.txt` | The coding agent's task prompt and final runtime output. |
+| `agent/nexau_in_memory_tracer.cleaned.json` | Detailed structured trace of model messages, tool calls, and observations. |
+| `agent/setup/stdout.txt` | Agent installation/setup output inside the container. Check this first for missing runtime or dependency errors. |
+| `agent/command-0/stdout.txt` | Output from the agent's actual execution command. |
+| `verifier/test-stdout.txt` | Full test/verifier output, including assertion failures and Python tracebacks. |
+| `verifier/ctrf.json` | Structured test summary and per-test failure traces. |
+| `verifier/reward.txt` | Final numeric reward only, commonly `0` or `1`. |
+| `job.log` | Job-level failure summary; it may be empty when the job completes normally. |
+
+The directory layout is therefore:
+
+```text
+experiments/<experiment>/
+└── runs/iteration_001/input/benchmark/<job-id>/<trial-id>/
+    ├── agent/
+    │   ├── nexau.txt
+    │   ├── nexau_in_memory_tracer.cleaned.json
+    │   └── setup/stdout.txt
+    ├── verifier/
+    │   ├── test-stdout.txt
+    │   ├── ctrf.json
+    │   └── reward.txt
+    ├── result.json
+    └── trial.log
+```
+
+For a live run, check the host processes and Docker container from another
+terminal:
+
+```bash
+ps aux | grep -E 'evolve.py|harbor run' | grep -v grep
+docker ps
+ollama ps
+```
+
+To locate the newest experiment and follow the agent log:
+
+```bash
+EXP=$(find experiments -maxdepth 1 -type d -name '20*__*' -print | sort | tail -1)
+find "$EXP/runs" -name 'nexau.txt' -print
+tail -f "$EXP"/runs/iteration_001/input/benchmark/*/*/agent/nexau.txt
+```
+
+Interpret the summary carefully: `Errors: 0` means Harbor and the agent ran
+without infrastructure exceptions; `reward = 0` can still mean that the agent
+ran successfully but its implementation failed the task verifier. In that
+case, inspect `verifier/test-stdout.txt` and `verifier/ctrf.json` rather than
+the Docker or Ollama logs.
+
+#### Preserving code generated by the agent
+
+The coding agent normally writes its solution inside the task container, often
+under `/app`. Harbor mounts the agent and verifier logs back to the host, but
+does not mount the task workspace. The container is normally removed after the
+trial, so generated files such as `/app/headless_terminal.py` are not
+automatically preserved as standalone files in the experiment directory.
+
+The model's tool commands and responses are still recorded in
+`agent/nexau_in_memory_tracer.cleaned.json`, which is usually enough to inspect
+or reconstruct a generated file. For example, search that trace for the file
+name:
+
+```bash
+rg -n 'headless_terminal\.py|/app/' \
+  experiments/<experiment>/runs/iteration_001/input/benchmark/<job-id>/<trial-id>/agent/nexau_in_memory_tracer.cleaned.json
+```
+
+For deeper debugging, run Harbor directly and ask Docker to keep the stopped
+container. This is separate from the normal `evolve.py` workflow:
+
+```bash
+uv run harbor run \
+  --agent nexau \
+  --env docker \
+  --model qwen3:14b \
+  --n-concurrent 1 \
+  --ak config_path=/absolute/path/to/code_agent.yaml \
+  --jobs-dir /tmp/ahe-debug \
+  --path /absolute/path/to/dataset \
+  --force-build \
+  --ek keep_containers=true \
+  --no-delete
+```
+
+After the trial finishes, find the stopped container and copy the generated
+file out:
+
+```bash
+docker ps -a --format 'table {{.Names}}\t{{.Status}}'
+docker cp <container-name>:/app/headless_terminal.py ./generated-headless-terminal.py
+```
+
+Use `docker compose down` or remove the retained container after collecting the
+files. Keeping containers consumes disk space, so this mode is intended for
+investigation rather than routine evaluations.
 
 The dataset here is a pack from [`laude-institute/harbor-datasets`](https://github.com/laude-institute/harbor-datasets) — clone the subset you need and point `--dataset-dir` at its directory.
 

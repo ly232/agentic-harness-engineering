@@ -18,12 +18,22 @@ path: "/Users/ly232/github/terminal-bench-2"
 dataset: null
 
 harbor:
+  # Run rollouts in a local Docker container.  The default E2B environment is
+  # remote, so localhost there would refer to the E2B sandbox rather than this
+  # machine.  Docker Desktop exposes the host as host.docker.internal.
+  env: docker
+  # Harbor's Docker environment needs the NexAU runtime baked into the task
+  # image; E2B templates get this setup from scripts/build_templates.py.
+  prepare_nexau: true
+  # Re-run the Dockerfile build so the injected runtime is present. Docker
+  # still reuses unchanged layers from its build cache.
+  force_build: true
   k: 1
   n_concurrent: 1
 
 llm:
   api_key: "ollama"
-  base_url: "http://localhost:11434/v1"
+  base_url: "http://host.docker.internal:11434/v1"
   model: "qwen3:14b"
 
 code_agent_patch:

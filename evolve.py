@@ -393,12 +393,55 @@ def wait_for_job(jobs_root: Path, started_after: str | None,
         time.sleep(poll_interval)
 
 
+def _prepare_local_docker_dataset(config: dict, iteration_dir: Path) -> Path:
+    """Copy a task dataset and bake the NexAU runtime into its Dockerfiles.
+
+    E2B templates are normally prepared by ``scripts/build_templates.py``.
+    Harbor's plain Docker environment does not use those templates, so the
+    task image must contain the same ``/opt/nexau-venv`` expected by Harbor's
+    NexAU agent installer.
+    """
+    task_path = config.get("path")
+    if not task_path:
+        raise ValueError("Local Docker NexAU setup requires a local 'path' dataset")
+
+    source = Path(task_path)
+    if not source.is_absolute():
+        source = (PROJECT_DIR / source).resolve()
+    if not source.is_dir():
+        raise FileNotFoundError(f"Local Docker dataset path does not exist: {source}")
+
+    prepared = iteration_dir / "local-docker-dataset"
+    if not prepared.exists():
+        shutil.copytree(source, prepared)
+
+    marker = "# AHE_LOCAL_NEXAU_RUNTIME"
+    dockerfiles = list(prepared.rglob("Dockerfile"))
+    if not dockerfiles:
+        raise FileNotFoundError(f"No Dockerfiles found under local dataset: {prepared}")
+
+    setup = f'''\n\n{marker}\n# Harbor's local Docker environment expects this runtime for the NexAU agent.\nUSER root\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends ca-certificates curl build-essential git \\\n    && rm -rf /var/lib/apt/lists/*\nRUN curl -LsSf https://astral.sh/uv/install.sh | sh\nRUN /root/.local/bin/uv python install 3.13 \\\n    && /root/.local/bin/uv venv /opt/nexau-venv --python 3.13 --clear\nRUN /root/.local/bin/uv pip install --python /opt/nexau-venv/bin/python \\\n    git+https://github.com/Curry09/NexAU-harbor.git \\\n    git+https://github.com/nex-agi/NexAU.git@v0.3.9\n'''
+
+    for dockerfile in dockerfiles:
+        contents = dockerfile.read_text(encoding="utf-8")
+        if marker not in contents:
+            dockerfile.write_text(contents.rstrip() + setup, encoding="utf-8")
+
+    print(
+        f"[docker] Prepared local dataset with NexAU runtime: {prepared} "
+        f"({len(dockerfiles)} Dockerfile(s))",
+        flush=True,
+    )
+    return prepared
+
+
 def _build_harbor_cmd(config: dict, workspace_dir: Path, agent_config_filename: str,
-                      iteration_dir: Path, n_concurrent_override: int | None = None) -> list[str]:
+                      iteration_dir: Path, n_concurrent_override: int | None = None,
+                      task_path_override: Path | None = None) -> list[str]:
     """Build the harbor CLI command list."""
     harbor_cfg = config["harbor"]
     dataset = config.get("dataset")
-    task_path = config.get("path")
+    task_path = str(task_path_override) if task_path_override else config.get("path")
     llm_cfg = get_llm_config(config, role="agent")
     model = llm_cfg["model"]
 
@@ -449,6 +492,7 @@ def launch_harbor(config: dict, workspace_dir: Path, agent_config_filename: str,
     Thread-safe: uses env= to pass LLM vars to the subprocess without
     modifying the process-global environment.
     """
+    harbor_cfg = config["harbor"]
     llm_cfg = get_llm_config(config, role="agent")
 
     sub_env = os.environ.copy()
@@ -466,8 +510,19 @@ def launch_harbor(config: dict, workspace_dir: Path, agent_config_filename: str,
     prev_latest = find_latest_job_dir(iteration_dir)
     started_after = prev_latest.name if prev_latest else ""
 
-    cmd = _build_harbor_cmd(config, workspace_dir, agent_config_filename,
-                            iteration_dir, n_concurrent_override=n_concurrent_override)
+    task_path_override = None
+    if (harbor_cfg.get("env") == "docker"
+            and harbor_cfg.get("prepare_nexau", False)):
+        task_path_override = _prepare_local_docker_dataset(config, iteration_dir)
+
+    cmd = _build_harbor_cmd(
+        config,
+        workspace_dir,
+        agent_config_filename,
+        iteration_dir,
+        n_concurrent_override=n_concurrent_override,
+        task_path_override=task_path_override,
+    )
 
     tag = f" [{label}]" if label else ""
     print(f"[eval{tag}] Starting evaluation: {' '.join(cmd)}", flush=True)
